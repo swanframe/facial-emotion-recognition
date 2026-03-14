@@ -56,6 +56,7 @@ def parse_image(file_path, label, augment=False):
         img = tf.image.random_brightness(img, max_delta=0.15)
         img = tf.image.random_contrast(img, lower=0.85, upper=1.15)
         img = tf.image.random_saturation(img, lower=0.85, upper=1.15)
+        img = tf.clip_by_value(img, 0.0, 1.0)   # ensure values stay in [0, 1]
 
     return img, label
 
