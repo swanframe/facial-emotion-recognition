@@ -20,9 +20,10 @@ models/*.h5
 models/*.keras
 !models/.gitkeep
 
-# Outputs (keep structure, ignore files)
+# Outputs (keep structure, ignore large files but allow images)
 outputs/*
 !outputs/.gitkeep
+!outputs/*.png
 
 # Kaggle credentials
 .kaggle/
