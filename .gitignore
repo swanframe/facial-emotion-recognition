@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.env
+
+# Jupyter / Colab
+.ipynb_checkpoints/
+*.ipynb
+
+# Dataset & large files
+data/
+*.zip
+*.h5
+*.keras
+
+# Model weights (keep only final)
+models/*.h5
+models/*.keras
+!models/.gitkeep
+
+# Outputs (keep structure, ignore files)
+outputs/*
+!outputs/.gitkeep
+
+# Kaggle credentials
+.kaggle/
+kaggle.json
+
+# OS
+.DS_Store
+Thumbs.db
