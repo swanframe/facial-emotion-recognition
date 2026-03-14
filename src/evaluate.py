@@ -101,43 +101,52 @@ def print_classification_report(y_true, y_pred):
 
 
 # ── 5. Grad-CAM ───────────────────────────────────────────────
-def make_gradcam_heatmap(img_array, model, last_conv_layer_name):
+def build_grad_model(model):
     """
-    Compute Grad-CAM heatmap for a given image.
-    Highlights regions the model focused on for its prediction.
+    Build a connected Grad-CAM model that outputs both
+    top_conv feature maps and final predictions in ONE forward pass.
+    Both outputs share the same graph so gradients can flow.
     """
-    # Build a model that outputs (last_conv_layer, final_predictions)
-    # top_conv lives inside the efficientnetb0 sub-model, not at top level
-    efficientnet_submodel = model.get_layer("efficientnetb0")
-    last_conv_output      = efficientnet_submodel.get_layer(last_conv_layer_name).output
-
-    # Build intermediate model: input → last conv output
-    conv_model = tf.keras.Model(
-        inputs=efficientnet_submodel.input,
-        outputs=last_conv_output
+    effnet          = model.get_layer("efficientnetb0")
+    effnet_partial  = tf.keras.Model(
+        inputs=effnet.input,
+        outputs=[effnet.get_layer("top_conv").output, effnet.output]
     )
 
-    # Wrap: full model input → (conv output, final predictions)
-    inputs    = model.input
-    # Pass through Rescaling layer first
-    rescaled  = model.get_layer("rescaling_2")(inputs)
-    conv_out  = conv_model(rescaled)
-    final_out = model(inputs)
+    model_input          = model.input
+    rescaling_layer      = next(l for l in model.layers
+                                if isinstance(l, tf.keras.layers.Rescaling))
+    rescaled             = rescaling_layer(model_input)
+    conv_out, effnet_out = effnet_partial(rescaled)
 
-    grad_model = tf.keras.Model(inputs=inputs, outputs=[conv_out, final_out])
+    x           = model.get_layer("global_average_pooling2d")(effnet_out)
+    x           = model.get_layer("batch_normalization")(x)
+    x           = model.get_layer("dense")(x)
+    x           = model.get_layer("dropout")(x)
+    x           = model.get_layer("dense_1")(x)
+    x           = model.get_layer("dropout_1")(x)
+    final_pred  = model.get_layer("dense_2")(x)
 
+    return tf.keras.Model(inputs=model_input, outputs=[conv_out, final_pred])
+
+
+def make_gradcam_heatmap(img_array, grad_model):
+    """
+    Compute Grad-CAM heatmap for a given image using a pre-built grad_model.
+    Highlights regions the model focused on for its prediction.
+    """
     with tf.GradientTape() as tape:
-        conv_outputs, predictions = grad_model(img_array)
-        pred_index = tf.argmax(predictions[0])
+        conv_outputs, predictions = grad_model(img_array, training=False)
+        tape.watch(conv_outputs)
+        pred_index    = tf.argmax(predictions[0])
         class_channel = predictions[:, pred_index]
 
-    grads       = tape.gradient(class_channel, conv_outputs)
+    grads        = tape.gradient(class_channel, conv_outputs)
     pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-
-    conv_outputs = conv_outputs[0]
-    heatmap      = conv_outputs @ pooled_grads[..., tf.newaxis]
+    heatmap      = conv_outputs[0] @ pooled_grads[..., tf.newaxis]
     heatmap      = tf.squeeze(heatmap)
-    heatmap      = tf.maximum(heatmap, 0) / (tf.math.reduce_max(heatmap) + 1e-8)
+    heatmap      = tf.maximum(heatmap, 0)
+    heatmap      = heatmap / (tf.math.reduce_max(heatmap) + 1e-8)
     return heatmap.numpy(), int(pred_index), predictions[0].numpy()
 
 
@@ -149,6 +158,8 @@ def plot_gradcam(model, last_conv_layer_name="top_conv"):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     import cv2, random
     random.seed(SEED)
+    grad_model = build_grad_model(model)
+    print(f"   Grad-CAM model built (connected graph)")
 
     fig, axes = plt.subplots(
         len(EMOTIONS), 3,
@@ -171,9 +182,7 @@ def plot_gradcam(model, last_conv_layer_name="top_conv"):
         img_arr  = np.expand_dims(img_rsz.astype("float32") / 255.0, axis=0)
 
         # Grad-CAM
-        heatmap, pred_idx, probs = make_gradcam_heatmap(
-            img_arr, model, last_conv_layer_name
-        )
+        heatmap, pred_idx, probs = make_gradcam_heatmap(img_arr, grad_model)
 
         # Overlay heatmap
         heatmap_rsz = cv2.resize(heatmap, IMG_SIZE)
@@ -220,24 +229,11 @@ def main():
 
     model, test_ds = load_model_and_data()
 
-    # Print model summary to confirm last conv layer name
-    last_conv = None
-    for layer in reversed(model.layers):
-        # Traverse into EfficientNet sub-model
-        if hasattr(layer, "layers"):
-            for sub in reversed(layer.layers):
-                if isinstance(sub, tf.keras.layers.Conv2D):
-                    last_conv = sub.name
-                    break
-        if last_conv:
-            break
-    print(f"\n🔎 Last Conv2D layer for Grad-CAM: {last_conv}")
-
     y_true, y_pred = get_predictions(model, test_ds)
 
     plot_confusion_matrix(y_true, y_pred)
     print_classification_report(y_true, y_pred)
-    plot_gradcam(model, last_conv_layer_name=last_conv)
+    plot_gradcam(model)
 
     print("\n✅ evaluate.py completed successfully.")
 
