@@ -24,6 +24,7 @@ models/*.keras
 outputs/*
 !outputs/.gitkeep
 !outputs/*.png
+!outputs/*.txt
 
 # Kaggle credentials
 .kaggle/
